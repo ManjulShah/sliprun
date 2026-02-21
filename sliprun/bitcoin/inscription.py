@@ -310,11 +310,12 @@ class InscriptionBuilder:
         tx = Transaction([txin], [txout], has_segwit=True)
 
         # Sign via tapscript (script path spend)
+        # sign_taproot_input(tx, index, utxo_scripts, amounts, ...)
         sig = self._privkey.sign_taproot_input(
             tx,
             0,
-            [commit_amount],
             [p2tr_script_pubkey],
+            [commit_amount],
             script_path=True,
             tapleaf_script=inscription_script,
             tweak=False,

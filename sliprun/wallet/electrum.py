@@ -208,6 +208,26 @@ class ElectrumClient:
         """
         return self._call("broadcast", tx_hex)
 
+    def bump_fee(self, txid: str, new_fee_rate: float) -> str:
+        """
+        Replace an unconfirmed transaction with a higher-fee version (RBF).
+
+        Electrum rebuilds the transaction spending the same inputs but pays a
+        higher fee by reducing the change output.  The wallet must contain the
+        original transaction and its inputs must signal RBF.
+
+        Args:
+            txid:         The txid of the stuck transaction.
+            new_fee_rate: New fee rate in sat/vByte (must be higher than original).
+
+        Returns:
+            Signed replacement transaction hex ready for broadcast.
+        """
+        result = self._call("bumpfee", txid, {"fee_rate": new_fee_rate})
+        if isinstance(result, dict):
+            return result.get("hex", result.get("tx", ""))
+        return result
+
     def get_transaction(self, txid: str) -> dict:
         """Return full transaction details by txid."""
         return self._call("gettransaction", txid)

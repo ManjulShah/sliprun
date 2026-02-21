@@ -6,7 +6,11 @@
       "Bash(head:*)",
       "Bash(.venv/bin/pip install:*)",
       "Bash(.venv/bin/pytest:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(gh repo:*)",
+      "Bash(gh auth:*)",
+      "Bash(git remote add origin https://github.com/ManjulShah/sliprun.git && git push -u origin main 2>&1)",
+      "Bash(git add:*)"
     ]
   }
 }

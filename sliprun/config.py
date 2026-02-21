@@ -6,6 +6,12 @@ from dotenv import load_dotenv
 
 load_dotenv(Path.cwd() / ".env")
 
+_NETWORK_URLS: dict[str, str] = {
+    "mainnet": os.getenv("SLIPSTREAM_BASE_URL", "https://slipstream.mara.com"),
+    "testnet": os.getenv("SLIPSTREAM_TESTNET_URL", "https://slipstream-testnet.mara.com"),
+    "signet":  os.getenv("SLIPSTREAM_SIGNET_URL",  "https://slipstream-testnet.mara.com"),
+}
+
 
 @dataclass
 class Config:
@@ -35,6 +41,11 @@ class Config:
     network: str = field(
         default_factory=lambda: os.getenv("BITCOIN_NETWORK", "mainnet")
     )
+
+    def slipstream_url_for(self, network: str | None = None) -> str:
+        """Return the Slipstream base URL for the given (or current) network."""
+        net = network or self.network
+        return _NETWORK_URLS.get(net, self.slipstream_base_url)
 
 
 config = Config()
