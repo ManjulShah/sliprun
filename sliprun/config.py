@@ -8,8 +8,8 @@ load_dotenv(Path.cwd() / ".env")
 
 _NETWORK_URLS: dict[str, str] = {
     "mainnet": os.getenv("SLIPSTREAM_BASE_URL", "https://slipstream.mara.com"),
-    "testnet": os.getenv("SLIPSTREAM_TESTNET_URL", "https://slipstream-testnet.mara.com"),
-    "signet":  os.getenv("SLIPSTREAM_SIGNET_URL",  "https://slipstream-testnet.mara.com"),
+    "testnet": os.getenv("SLIPSTREAM_TESTNET_URL", "https://teststream.mara.com"),
+    "signet":  os.getenv("SLIPSTREAM_SIGNET_URL",  "https://teststream.mara.com"),
 }
 
 
