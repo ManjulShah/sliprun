@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:slipstream.mara.com)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(.venv/bin/pytest:*)",
+      "Bash(git init:*)"
+    ]
+  }
+}
