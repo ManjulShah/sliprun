@@ -1,5 +1,7 @@
 # sliprun
 
+[![CI](https://github.com/ManjulShah/sliprun/actions/workflows/ci.yml/badge.svg)](https://github.com/ManjulShah/sliprun/actions/workflows/ci.yml)
+
 **Bitcoin transaction builder with Ordinal inscriptions, powered by the [Marathon Slipstream API](https://slipstream.mara.com).**
 
 Submit raw Bitcoin transactions — including Ordinals commit/reveal pairs and OP_RETURN embeds — directly into Marathon's private mempool for faster, more predictable inclusion.
