@@ -153,13 +153,14 @@ def bump_fee_manual(
     # Since we don't have the UTXO amounts in the raw TX, we derive them from
     # the outputs of the original (conservative: use change output amount as proxy).
     # For accurate signing the caller should use the Electrum-assisted path.
-    funding_script = pubkey.get_segwit_address().to_script_pub_key()
+    # BIP143 scriptCode for P2WPKH is the P2PKH script, not the witness program
+    signing_script = pubkey.get_address().to_script_pub_key()
     for i in range(len(new_inputs)):
         # We can't know the exact UTXO amount without looking up the inputs,
         # so we attempt to sign; callers that need 100% accuracy should use
         # bump_fee_electrum() instead.
         utxo_amount = change_output.amount + new_fee  # rough estimate
-        sig = privkey.sign_segwit_input(new_tx, i, funding_script, utxo_amount)
+        sig = privkey.sign_segwit_input(new_tx, i, signing_script, utxo_amount)
         new_tx.witnesses.append(TxWitnessInput([sig, pubkey.to_hex()]))
 
     return new_tx.serialize()

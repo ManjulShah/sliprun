@@ -26,12 +26,28 @@ def sat_to_btc(satoshis: int) -> float:
     return satoshis / 100_000_000
 
 
+def p2wpkh_signing_script(public_key) -> Script:
+    """
+    Return the BIP143 scriptCode for signing a P2WPKH input.
+
+    P2WPKH witness programs are OP_0 <20-byte-hash>, but BIP143 requires
+    signing over the equivalent P2PKH script:
+        OP_DUP OP_HASH160 <hash> OP_EQUALVERIFY OP_CHECKSIG
+
+    Always use this (not address_to_script_pubkey) when calling
+    PrivateKey.sign_segwit_input() for P2WPKH inputs.
+    """
+    return public_key.get_address().to_script_pub_key()
+
+
 def address_to_script_pubkey(address: str) -> Script:
     """
-    Convert a Bitcoin address to its scriptPubKey.
+    Convert a Bitcoin address to its scriptPubKey (for transaction outputs).
 
     Supports P2PKH (1...), P2SH (3...), P2WPKH/P2WSH (bc1q...) and
     P2TR (bc1p...) addresses.
+
+    NOTE: for signing P2WPKH *inputs*, use p2wpkh_signing_script() instead.
     """
     from bitcoinutils.keys import (
         P2pkhAddress,

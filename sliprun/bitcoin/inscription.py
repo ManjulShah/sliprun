@@ -273,12 +273,13 @@ class InscriptionBuilder:
 
         tx = Transaction([txin], outputs, has_segwit=True)
 
-        # Sign commit input — regular P2WPKH spend from the funding UTXO
-        funding_script = address_to_script_pubkey(utxo["address"])
+        # Sign commit input — P2WPKH spend (BIP143 scriptCode = P2PKH script)
+        from .transaction import p2wpkh_signing_script
+        signing_script = p2wpkh_signing_script(self._pubkey)
         sig = self._privkey.sign_segwit_input(
             tx,
             0,
-            funding_script,
+            signing_script,
             utxo["satoshis"],
         )
         tx.witnesses.append(
@@ -387,8 +388,8 @@ def build_op_return_tx(
 
     tx = Transaction([txin], outputs, has_segwit=True)
 
-    funding_script = address_to_script_pubkey(funding_utxo["address"])
-    sig = privkey.sign_segwit_input(tx, 0, funding_script, funding_sats)
+    signing_script = pubkey.get_address().to_script_pub_key()  # BIP143 P2PKH scriptCode
+    sig = privkey.sign_segwit_input(tx, 0, signing_script, funding_sats)
     tx.witnesses.append(TxWitnessInput([sig, pubkey.to_hex()]))
 
     return tx.serialize()
