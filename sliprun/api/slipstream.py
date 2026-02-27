@@ -170,7 +170,7 @@ class SlipstreamClient:
             raise ValueError(
                 f"Package must contain 2-25 transactions, got {len(tx_hexes)}"
             )
-        payload = self._with_client_code({"txs": tx_hexes})
+        payload = self._with_client_code({"tx_hexes": tx_hexes})
         return self._post("/api/transactions/packages", payload)
 
     def test_transaction(self, tx_hexes: list[str]) -> dict:
@@ -184,4 +184,4 @@ class SlipstreamClient:
         Returns:
             Validation results per transaction.
         """
-        return self._post("/api/mempool/tests", {"txs": tx_hexes})
+        return self._post("/api/mempool/tests", {"tx_hexes": tx_hexes})
