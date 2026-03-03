@@ -47,6 +47,13 @@ from bitcoinutils.utils import ControlBlock
 # Maximum bytes per script push (consensus limit)
 _MAX_CHUNK = 520
 
+
+def generate_ephemeral_wif(network: str = "mainnet") -> str:
+    """Generate a cryptographically random ephemeral WIF private key."""
+    from .transaction import configure_network
+    configure_network(network)
+    return PrivateKey().to_wif()
+
 # Dust limit for a P2TR output (sat)
 _DUST_LIMIT = 546
 
@@ -248,6 +255,139 @@ class InscriptionBuilder:
 
         return cls(wif_private_key, network), OrdinalInscription(content_type, content)
 
+    def build_commit_psbt(
+        self,
+        inscription: OrdinalInscription,
+        funding_utxo: dict,
+        fee_rate: float,
+        change_address: str | None = None,
+    ) -> tuple[str, str, int]:
+        """
+        Build an unsigned commit PSBT for Sparrow Wallet signing.
+
+        Args:
+            inscription:   OrdinalInscription with content_type and content.
+            funding_utxo:  UTXO dict with keys: 'txid', 'vout', 'satoshis',
+                           'address'.
+            fee_rate:      Fee rate in sat/vByte.
+            change_address: Where to send change (defaults to funding address).
+
+        Returns:
+            (psbt_b64, inscription_address, commit_output_sat)
+        """
+        import struct
+        from io import BytesIO
+
+        import bitcoinutils.utils as _btu
+        if not hasattr(_btu, "read_varint"):
+            def _read_varint(stream: BytesIO) -> int:
+                raw = stream.read(1)
+                if not raw:
+                    raise EOFError("Empty stream in read_varint")
+                i = struct.unpack("<B", raw)[0]
+                if i == 0xFD:
+                    return struct.unpack("<H", stream.read(2))[0]
+                if i == 0xFE:
+                    return struct.unpack("<I", stream.read(4))[0]
+                if i == 0xFF:
+                    return struct.unpack("<Q", stream.read(8))[0]
+                return i
+            _btu.read_varint = _read_varint  # type: ignore[attr-defined]
+
+        from bitcoinutils.psbt import PSBT
+        from .transaction import address_to_script_pubkey, estimate_commit_fee, estimate_reveal_fee
+
+        script = _build_inscription_script(
+            self._pubkey_x_hex, inscription.content_type, inscription.content
+        )
+        p2tr_addr = self._pubkey.get_taproot_address([[script]])
+        inscription_address = p2tr_addr.to_string()
+        p2tr_script_pubkey = p2tr_addr.to_script_pub_key()
+
+        reveal_fee = estimate_reveal_fee(len(inscription.content), fee_rate)
+        commit_fee = estimate_commit_fee(fee_rate)
+        commit_output_sat = _DUST_LIMIT + reveal_fee
+
+        funding_sats = int(funding_utxo["satoshis"])
+        change_sats = funding_sats - commit_output_sat - commit_fee
+        if change_sats < 0:
+            raise InscriptionError(
+                f"Insufficient funds: need {commit_output_sat + commit_fee} sat, "
+                f"have {funding_sats} sat"
+            )
+
+        txin = TxInput(funding_utxo["txid"], int(funding_utxo["vout"]))
+        outputs = [TxOutput(commit_output_sat, p2tr_script_pubkey)]
+
+        _change_addr = change_address or funding_utxo.get("address", "")
+        if change_sats >= _DUST_LIMIT and _change_addr:
+            outputs.append(TxOutput(change_sats, address_to_script_pubkey(_change_addr)))
+
+        unsigned_tx = Transaction([txin], outputs, has_segwit=True)
+
+        psbt = PSBT(unsigned_tx)
+        psbt.inputs[0].witness_utxo = TxOutput(
+            funding_sats,
+            address_to_script_pubkey(funding_utxo["address"]),
+        )
+
+        return (psbt.to_base64(), inscription_address, commit_output_sat)
+
+    def build_reveal_from_commit(
+        self,
+        commit_tx_hex: str,
+        recipient: str,
+        inscription: OrdinalInscription,
+        fee_rate: float,
+    ) -> str:
+        """
+        Build and sign the reveal tx given the broadcast commit tx hex.
+
+        Scans the commit tx outputs to find the P2TR inscription output,
+        then signs and returns the reveal transaction hex.
+
+        Returns:
+            Signed reveal transaction hex.
+        """
+        from .transaction import estimate_reveal_fee
+
+        script = _build_inscription_script(
+            self._pubkey_x_hex, inscription.content_type, inscription.content
+        )
+        p2tr_addr = self._pubkey.get_taproot_address([[script]])
+        p2tr_script_pubkey = p2tr_addr.to_script_pub_key()
+        target_script_hex = p2tr_script_pubkey.to_hex()
+
+        commit_tx = Transaction.from_raw(commit_tx_hex)
+        commit_txid = commit_tx.get_txid()
+
+        found_vout = None
+        commit_amount = None
+        for i, out in enumerate(commit_tx.outputs):
+            if out.script_pubkey.to_hex() == target_script_hex:
+                found_vout = i
+                commit_amount = out.amount
+                break
+
+        if found_vout is None:
+            raise InscriptionError(
+                "Commit transaction does not contain the expected P2TR inscription "
+                "output. Did you sign the correct PSBT?"
+            )
+
+        reveal_fee = estimate_reveal_fee(len(inscription.content), fee_rate)
+        reveal_tx = self._build_reveal(
+            commit_txid=commit_txid,
+            commit_amount=commit_amount,
+            p2tr_script_pubkey=p2tr_script_pubkey,
+            inscription_script=script,
+            p2tr_addr=p2tr_addr,
+            recipient=recipient,
+            reveal_fee=reveal_fee,
+            commit_vout=found_vout,
+        )
+        return reveal_tx.serialize()
+
     # ------------------------------------------------------------------
     # Internal transaction builders
     # ------------------------------------------------------------------
@@ -296,10 +436,11 @@ class InscriptionBuilder:
         p2tr_addr,
         recipient: str,
         reveal_fee: int,
+        commit_vout: int = 0,
     ) -> Transaction:
         from .transaction import address_to_script_pubkey
 
-        txin = TxInput(commit_txid, 0)
+        txin = TxInput(commit_txid, commit_vout)
         reveal_amount = commit_amount - reveal_fee
         if reveal_amount < _DUST_LIMIT:
             raise InscriptionError(

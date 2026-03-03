@@ -12,7 +12,7 @@ from bitcoinutils.setup import setup as btc_setup
 
 def configure_network(network: str = "mainnet") -> None:
     """Configure python-bitcoinutils for the given network."""
-    mapping = {"mainnet": "mainnet", "testnet": "testnet", "signet": "testnet"}
+    mapping = {"mainnet": "mainnet", "testnet": "testnet", "testnet4": "testnet", "signet": "testnet"}
     btc_setup(mapping.get(network, "mainnet"))
 
 

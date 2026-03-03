@@ -2,19 +2,20 @@
 sliprun — Bitcoin inscription CLI via Marathon Slipstream API.
 
 Commands:
-  status          Show Slipstream API health and current fee rates
-  rates           Display current fee rates
-  inscribe        Create an Ordinal inscription (commit + reveal)
-  op-return       Embed up to 80 bytes of data via OP_RETURN
-  send            Send BTC using Electrum wallet
-  bump-fee        Replace a stuck transaction with a higher-fee version (RBF)
-  tx-status       Query a transaction status on Slipstream
-  test            Dry-run: validate raw transaction(s) without broadcasting
-  wallet-info     Show Electrum wallet balance and UTXOs
-  psbt create     Build an unsigned PSBT
-  psbt sign       Sign a PSBT with a local key or Electrum
-  psbt decode     Display PSBT contents
-  psbt finalize   Extract signed tx hex and optionally broadcast
+  status           Show Slipstream API health and current fee rates
+  rates            Display current fee rates
+  inscribe         Create an Ordinal inscription (commit + reveal)
+  inscribe-wizard  Interactive wizard: inscribe via Sparrow Wallet (no Electrum)
+  op-return        Embed up to 80 bytes of data via OP_RETURN
+  send             Send BTC using Electrum wallet
+  bump-fee         Replace a stuck transaction with a higher-fee version (RBF)
+  tx-status        Query a transaction status on Slipstream
+  test             Dry-run: validate raw transaction(s) without broadcasting
+  wallet-info      Show Electrum wallet balance and UTXOs
+  psbt create      Build an unsigned PSBT
+  psbt sign        Sign a PSBT with a local key or Electrum
+  psbt decode      Display PSBT contents
+  psbt finalize    Extract signed tx hex and optionally broadcast
 
 Global flag:
   --network mainnet|testnet|signet  Override BITCOIN_NETWORK env var
@@ -92,7 +93,7 @@ def _pick_utxo(min_sats: int) -> dict:
 @click.version_option(version="0.1.0", prog_name="sliprun")
 @click.option(
     "--network",
-    type=click.Choice(["mainnet", "testnet", "signet"]),
+    type=click.Choice(["mainnet", "testnet", "testnet4", "signet"]),
     default=None,
     envvar="BITCOIN_NETWORK",
     help="Bitcoin network (overrides BITCOIN_NETWORK env var).",
@@ -610,6 +611,196 @@ def bump_fee(txid, fee_rate, privkey, address, wallet_password, raw_tx, change_v
     else:
         console.print("[bold green]Replacement transaction submitted![/bold green]")
         rprint(result)
+
+
+def _parse_commit_tx_input(raw: str) -> str:
+    """
+    Parse Sparrow's output: either a signed PSBT (base64) or raw tx hex.
+
+    Returns signed tx hex.
+    """
+    raw = raw.strip()
+    if raw.startswith("cHNidP"):
+        from sliprun.bitcoin.psbt_ops import PSBTError, finalize_psbt
+        try:
+            return finalize_psbt(raw, network=config.network)
+        except Exception as exc:
+            raise click.ClickException(f"Could not finalize PSBT: {exc}") from exc
+    try:
+        bytes.fromhex(raw)
+    except ValueError:
+        raise click.ClickException(
+            "Input does not look like a signed PSBT (base64) or transaction hex."
+        )
+    return raw
+
+
+# ===========================================================================
+# inscribe-wizard
+# ===========================================================================
+
+@main.command("inscribe-wizard")
+@click.option("--test", is_flag=True, help="Build transactions but do not broadcast")
+def inscribe_wizard(test):
+    """
+    Interactive wizard: inscribe an image as an Ordinal via Sparrow Wallet.
+
+    No Electrum required. Sparrow signs the commit transaction; the wizard
+    builds and signs the reveal transaction automatically using an ephemeral key.
+
+    \b
+    Steps:
+      1. Provide the image path and MIME type
+      2. Choose a fee rate
+      3. Provide the recipient Bitcoin address
+      4. Provide a funding UTXO (txid, vout, satoshis, address)
+      5. Copy the commit PSBT into Sparrow, sign it, paste back the result
+      6. Wizard builds and signs the reveal transaction
+      7. Both transactions are submitted to Slipstream as a package
+    """
+    import mimetypes
+
+    from rich.panel import Panel
+    from rich.rule import Rule
+
+    from sliprun.bitcoin.inscription import (
+        InscriptionBuilder,
+        InscriptionError,
+        OrdinalInscription,
+        generate_ephemeral_wif,
+    )
+    from sliprun.bitcoin.transaction import estimate_commit_fee, estimate_reveal_fee
+
+    ss = _slipstream()
+
+    # ---- Step 1: Image file ----
+    console.print(Rule("[bold]Step 1 — Image file[/bold]"))
+    file_path = click.prompt("Path to image file")
+    path = Path(file_path)
+    if not path.exists():
+        raise click.ClickException(f"File not found: {path}")
+    content = path.read_bytes()
+    guessed, _ = mimetypes.guess_type(str(path))
+    auto_mime = guessed or "application/octet-stream"
+    console.print(f"  Size: [cyan]{len(content):,}[/cyan] bytes   MIME: [cyan]{auto_mime}[/cyan]")
+    content_type = click.prompt("Content type", default=auto_mime)
+
+    # ---- Step 2: Fee rate ----
+    console.print(Rule("[bold]Step 2 — Fee rate[/bold]"))
+    default_rate = 10.0
+    try:
+        r = ss.get_rates()
+        default_rate = float(r.get("medium", r.get("normal", 10.0)))
+        console.print(f"  Slipstream rates: {r}")
+    except SlipstreamError:
+        console.print("[dim]Could not fetch fee rates, defaulting to 10 sat/vByte[/dim]")
+    fee_rate = click.prompt("Fee rate (sat/vByte)", default=default_rate, type=float)
+
+    # ---- Step 3: Recipient ----
+    console.print(Rule("[bold]Step 3 — Recipient address[/bold]"))
+    recipient = click.prompt("Recipient Bitcoin address (where inscription lands)")
+
+    # ---- Step 4: Funding UTXO ----
+    console.print(Rule("[bold]Step 4 — Funding UTXO[/bold]"))
+    inscription = OrdinalInscription(content_type, content)
+    reveal_fee = estimate_reveal_fee(len(content), fee_rate)
+    commit_fee = estimate_commit_fee(fee_rate)
+    min_needed = 546 + reveal_fee + commit_fee
+    console.print(
+        f"  Minimum UTXO value: [bold cyan]{min_needed:,}[/bold cyan] sat "
+        f"(commit fee {commit_fee:,} + reveal fee {reveal_fee:,} + 546 dust)"
+    )
+    utxo_txid = click.prompt("UTXO txid")
+    utxo_vout = click.prompt("UTXO vout", type=int, default=0)
+    utxo_sats = click.prompt("UTXO value (satoshis)", type=int)
+    utxo_addr = click.prompt("UTXO address (P2WPKH bc1q...)")
+    funding_utxo = {
+        "txid": utxo_txid,
+        "vout": utxo_vout,
+        "satoshis": utxo_sats,
+        "address": utxo_addr,
+    }
+    if utxo_sats < min_needed:
+        raise click.ClickException(
+            f"UTXO has {utxo_sats:,} sat but at least {min_needed:,} sat is needed."
+        )
+
+    # ---- Step 5: Ephemeral key + commit PSBT ----
+    console.print(Rule("[bold]Step 5 — Commit PSBT[/bold]"))
+    ephemeral_wif = generate_ephemeral_wif(config.network)
+    console.print(Panel(
+        f"[yellow]{ephemeral_wif}[/yellow]\n\n"
+        "[dim]Save this key — you only need it if the wizard crashes before the "
+        "reveal tx is built.  Do not reuse it.[/dim]",
+        title="[bold yellow]Ephemeral WIF key[/bold yellow]",
+        border_style="yellow",
+    ))
+
+    try:
+        builder = InscriptionBuilder(ephemeral_wif, network=config.network)
+        psbt_b64, inscription_address, commit_output_sat = builder.build_commit_psbt(
+            inscription=inscription,
+            funding_utxo=funding_utxo,
+            fee_rate=fee_rate,
+        )
+    except InscriptionError as exc:
+        raise click.ClickException(f"Failed to build commit PSBT: {exc}") from exc
+
+    console.print(f"\n[dim]Inscription address:[/dim] {inscription_address}")
+    console.print(f"[dim]Commit output:[/dim] {commit_output_sat:,} sat\n")
+    console.print(Panel(
+        psbt_b64,
+        title="[bold]Unsigned Commit PSBT (base64)[/bold]",
+        border_style="blue",
+    ))
+    console.print(
+        "\n[bold]Sparrow signing instructions:[/bold]\n"
+        "  1. Open Sparrow → Tools → Show Transaction → Load PSBT\n"
+        "  2. Paste the base64 above, sign with your wallet\n"
+        "  3. Copy the signed result (PSBT base64 or raw tx hex)\n"
+        "  4. Paste it at the prompt below\n"
+    )
+    signed_raw = click.prompt("Signed commit tx (PSBT base64 or raw hex)")
+    commit_hex = _parse_commit_tx_input(signed_raw)
+
+    # ---- Step 6: Build reveal tx ----
+    console.print(Rule("[bold]Step 6 — Building reveal transaction[/bold]"))
+    try:
+        reveal_hex = builder.build_reveal_from_commit(
+            commit_tx_hex=commit_hex,
+            recipient=recipient,
+            inscription=inscription,
+            fee_rate=fee_rate,
+        )
+    except InscriptionError as exc:
+        raise click.ClickException(f"Failed to build reveal tx: {exc}") from exc
+    console.print("[green]Reveal transaction built and signed.[/green]")
+
+    if test:
+        console.print(Rule("[bold yellow]TEST MODE — not broadcasting[/bold yellow]"))
+        console.print(f"\n[dim]Commit tx hex:[/dim]\n{commit_hex}\n")
+        console.print(f"[dim]Reveal tx hex:[/dim]\n{reveal_hex}\n")
+        return
+
+    # ---- Step 7: Submit ----
+    console.print(Rule("[bold]Step 7 — Submit to Slipstream[/bold]"))
+    if not click.confirm("Submit inscription package to Slipstream?", default=True):
+        console.print("\n[yellow]Aborted. Save these hexes for manual submission:[/yellow]")
+        console.print(f"\n[dim]Commit:[/dim]\n{commit_hex}\n")
+        console.print(f"[dim]Reveal:[/dim]\n{reveal_hex}\n")
+        return
+
+    try:
+        result = ss.submit_package([commit_hex, reveal_hex])
+    except SlipstreamError as exc:
+        console.print(f"[red]Slipstream submission error: {exc}[/red]")
+        console.print("\n[yellow]Save these hexes for manual submission:[/yellow]")
+        console.print(f"\n[dim]Commit:[/dim]\n{commit_hex}\n")
+        console.print(f"[dim]Reveal:[/dim]\n{reveal_hex}\n")
+        sys.exit(1)
+
+    console.print("[bold green]Inscription package submitted to Slipstream![/bold green]")
+    rprint(result)
 
 
 # ===========================================================================
