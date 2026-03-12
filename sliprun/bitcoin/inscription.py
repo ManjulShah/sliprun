@@ -403,7 +403,7 @@ class InscriptionBuilder:
     ) -> Transaction:
         from .transaction import address_to_script_pubkey
 
-        txin = TxInput(utxo["prevout_hash"], int(utxo["prevout_n"]))
+        txin = TxInput(utxo["prevout_hash"], int(utxo["prevout_n"]), sequence=0xFFFFFFFD)  # signal RBF
         outputs = [TxOutput(commit_amount, p2tr_script_pubkey)]
 
         if change_amount >= _DUST_LIMIT and change_address:
@@ -440,7 +440,7 @@ class InscriptionBuilder:
     ) -> Transaction:
         from .transaction import address_to_script_pubkey
 
-        txin = TxInput(commit_txid, commit_vout)
+        txin = TxInput(commit_txid, commit_vout, sequence=0xFFFFFFFD)  # signal RBF
         reveal_amount = commit_amount - reveal_fee
         if reveal_amount < _DUST_LIMIT:
             raise InscriptionError(

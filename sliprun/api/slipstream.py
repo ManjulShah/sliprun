@@ -52,11 +52,11 @@ class FeeRates:
 
     @classmethod
     def from_dict(cls, d: dict) -> "FeeRates":
-        # Slipstream returns rates in various shapes; normalise here
+        # Slipstream returns: submit_fee_rate, market_rate, slipstream_rate/effective_rate
         return cls(
-            low=d.get("low", d.get("economy", 0.0)),
-            medium=d.get("medium", d.get("normal", 0.0)),
-            high=d.get("high", d.get("priority", 0.0)),
+            low=d.get("submit_fee_rate", d.get("low", d.get("economy", 0.0))),
+            medium=d.get("market_rate", d.get("medium", d.get("normal", 0.0))),
+            high=d.get("slipstream_rate", d.get("effective_rate", d.get("high", d.get("priority", 0.0)))),
         )
 
 

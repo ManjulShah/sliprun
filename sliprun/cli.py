@@ -671,7 +671,15 @@ def inscribe_wizard(test):
     )
     from sliprun.bitcoin.transaction import estimate_commit_fee, estimate_reveal_fee
 
-    ss = _slipstream()
+    # ---- Client code ----
+    default_cc = config.slipstream_client_code or ""
+    client_code = click.prompt(
+        "Slipstream client code (press Enter to skip)",
+        default=default_cc,
+        show_default=bool(default_cc),
+    ).strip() or None
+
+    ss = SlipstreamClient(base_url=config.slipstream_url_for(), client_code=client_code)
 
     # ---- Step 1: Image file ----
     console.print(Rule("[bold]Step 1 — Image file[/bold]"))
@@ -683,7 +691,21 @@ def inscribe_wizard(test):
     guessed, _ = mimetypes.guess_type(str(path))
     auto_mime = guessed or "application/octet-stream"
     console.print(f"  Size: [cyan]{len(content):,}[/cyan] bytes   MIME: [cyan]{auto_mime}[/cyan]")
-    content_type = click.prompt("Content type", default=auto_mime)
+    content_type = click.prompt("Content type (press Enter to accept)", default=auto_mime)
+    # Normalise bare extensions people sometimes type (e.g. "jpeg" → "image/jpeg")
+    _BARE_EXT_MAP = {
+        "jpeg": "image/jpeg", "jpg": "image/jpeg", "png": "image/png",
+        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+        "mp4": "video/mp4", "mp3": "audio/mpeg", "pdf": "application/pdf",
+        "txt": "text/plain",
+    }
+    if "/" not in content_type:
+        normalised = _BARE_EXT_MAP.get(content_type.lower().lstrip("."))
+        if normalised:
+            console.print(f"  [yellow]⚠ Normalised '{content_type}' → '{normalised}'[/yellow]")
+            content_type = normalised
+        else:
+            console.print(f"  [yellow]⚠ '{content_type}' doesn't look like a valid MIME type (expected 'type/subtype')[/yellow]")
 
     # ---- Step 2: Fee rate ----
     console.print(Rule("[bold]Step 2 — Fee rate[/bold]"))
